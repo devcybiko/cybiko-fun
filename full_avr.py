@@ -30,21 +30,38 @@ last_rx = None
 def ms():
     return (time.monotonic() - t0) * 1000.0
 
-def ascii_runs(data: bytes):
-    runs = []
-    run = bytearray()
-    for b in data:
-        if 32 <= b <= 126:
-            run.append(b)
+def strip_msb(frame: bytes) -> bytes:
+    """Strips the most significant bit from each byte in the frame."""
+    return bytes(b & 0x7F for b in frame)
+
+def extract_msbs(frame: bytes) -> str:
+    """Extracts the most significant bit from each byte and returns a string of '1's and '.'s."""
+    return "".join('1' if b & 0x80 else '.' for b in frame)
+
+def print_frame(frame: bytes | str):
+    """Prints the frame in a classic hexdump format."""
+    is_bytes = isinstance(frame, bytes)
+    for i in range(0, len(frame), 16):
+        chunk = frame[i:i+16]
+        
+        # Address
+        addr = f"{i:08x}"
+        
+        # Hex values
+        if is_bytes:
+            hex_part = " ".join(f"{b:02x}" for b in chunk)
         else:
-            run.append(ord('.'))
-            #if len(run) >= 3:
-            #    runs.append(run.decode("ascii", errors="ignore"))
-            #run.clear()
-            pass
-    if len(run) >= 3:
-        runs.append(run.decode("ascii", errors="ignore"))
-    return runs
+            hex_part = " ".join(f"{ord(c):02x}" for c in chunk)
+        hex_part = hex_part.ljust(16 * 3 - 1) # Pad to 16 bytes width
+
+        # ASCII values
+        if is_bytes:
+            ascii_part = "".join(chr(b) if 32 <= b <= 126 else "." for b in chunk)
+        else:
+            ascii_part = chunk
+        
+        print(f"{addr}  {hex_part}  |{ascii_part}|")
+    print("")
 
 def rst_cb(gpio, level, tick):
     if level == 0:
@@ -68,12 +85,13 @@ try:
             if buf and last_rx and (now - last_rx) >= GAP_SEC:
                 frame = bytes(buf)
                 then = time.monotonic()
-                delta = (now - then) * 1000.0
+                delta = (then - now) * 1000.0
                 print(f"{delta:9.3f} ms {ms():9.3f} ms  UART burst len={len(frame)}")
-                print(frame.hex(" "))
-                runs = ascii_runs(frame)
-                if runs:
-                    print("ASCII:", runs)
+                print_frame(frame)
+                msbs = extract_msbs(frame)
+                print_frame(msbs)
+                frame = strip_msb(frame)
+                print_frame(frame)
                 buf.clear()
                 last_rx = None
 
