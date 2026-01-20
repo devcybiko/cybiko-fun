@@ -26,21 +26,6 @@ last_event_tick = 0
 last_idle_tick = 0
 transitions = []
 
-def first_frame(bits, nbits, nparitybits, nstopbits):
-    """
-    Scan bits and return the index of the first valid UART frame.
-    A valid frame has start bit 0 and all stop bits 1.
-    Returns the index or None if not found.
-    """
-    frame_len = 1 + nbits + nparitybits + nstopbits
-    for idx in range(len(bits) - frame_len + 1):
-        frame = bits[idx:idx+frame_len]
-        start = frame[0]
-        stop = frame[1+nbits+nparitybits:]
-        if start == 0 and all(s == 1 for s in stop):
-            return idx
-    return None
-
 def print_bitstream(bits, group_size):
     """
     Print the bitstream in groups, skipping long runs of 1s as '1xN'.
@@ -84,77 +69,6 @@ def print_bitstream(bits, group_size):
             print(' '.join(grouped), flush=True)
         i += len(out)
 
-def decode_uart(bits, baud=38400, nbits=8, nparity=1, nstop=2):
-    """
-    Decodes a bitstream into hex bytes using a fixed-frame window.
-    Validates Start, Parity, and Stop bits for the 8E2 (or custom) protocol.
-    """
-    # frame_len for 8E2 is 1 (start) + 8 (data) + 1 (parity) + 2 (stop) = 12
-    frame_len = 1 + nbits + nparity + nstop
-    bytes_found = []
-
-    # Process bits in chunks of frame_len
-    for i in range(0, len(bits), frame_len):
-        frame = bits[i : i + frame_len]
-        
-        # Ensure we have a complete frame to work with
-        if len(frame) < frame_len:
-            break
-            
-        # 1. Validate Start Bit (always 0) and Stop Bits (always 1)
-        # For 8E2, frame[-1] and frame[-2] must be 1
-        start_ok = (frame[0] == 0)
-        stop_ok = all(bit == 1 for bit in frame[frame_len - nstop : frame_len])
-        
-        if start_ok and stop_ok:
-            # 2. Extract Data Bits (Least Significant Bit First)
-            # Data usually starts at index 1 and goes for nbits
-            data_bits = frame[1 : 1 + nbits]
-            
-            byte_val = 0
-            for shift, bit in enumerate(data_bits):
-                if bit:
-                    byte_val |= (1 << shift)
-            
-            # 3. Optional: Parity Validation
-            # In 8E2 (Even), (sum of data bits + parity bit) % 2 should be 0
-            if nparity > 0:
-                parity_bit = frame[1 + nbits]
-                actual_parity = (sum(data_bits) + parity_bit) % 2
-                if actual_parity != 0:
-                    # You can log a parity error here if needed
-                    pass
-
-            bytes_found.append(f"0x{byte_val:02X}")
-        else:
-            # Framing error - likely out of sync or noise
-            # bytes_found.append("??") 
-            pass
-
-    if bytes_found:
-        print(f"Decoded {len(bytes_found)} bytes: {' '.join(bytes_found)}", flush=True)
-        
-    return bytes_found
-
-def decode_uart(bits, nbits=8, nparity=1, nstop=2):
-    frame_len = 1 + nbits + nparity + nstop # 12
-    bytes_found = []
-    
-    for i in range(0, len(bits), frame_len):
-        frame = bits[i:i+frame_len]
-        if len(frame) < frame_len: break
-        
-        # Standard UART: Start(0), Data(8), Parity(1), Stop(2)
-        # Data is index 1 to 8. We MUST use LSB-first.
-        data_bits = frame[1:9] 
-        byte_val = 0
-        for shift, bit in enumerate(data_bits):
-            if bit:
-                byte_val |= (1 << shift)
-        
-        bytes_found.append(byte_val)
-    return bytes_found
-
 def decode_uart(bits, nbits=8, nparity=1, nstop=2):
     frame_len = 1 + nbits + nparity + nstop # 12
     values = []
@@ -192,131 +106,6 @@ def analyze_transitions(snapshot):
         duration = pigpio.tickDiff(snapshot[i][1], snapshot[i+1][1])
         durations.append((level, duration))
     return durations
-
-def decode_bitstream(durations, baud=38400):
-    BIT_US = 1000000.0 / baud
-    HALF_BIT = BIT_US / 2.0
-    
-    # Create absolute timeline
-    timeline = []
-    t_abs = 0
-    for level, dur in durations:
-        timeline.append((t_abs, level))
-        t_abs += dur
-
-    def get_level(t):
-        for edge_t, level in reversed(timeline):
-            if edge_t <= t: return level
-        return 1
-
-    bits = []
-    t = 0
-    # Hunt for Start Bit (1 -> 0 transition)
-    while t < (t_abs - (BIT_US * 12)):
-        # Look for falling edge
-        if get_level(t) == 1 and get_level(t + 2) == 0:
-            start_edge = t + 2
-            # Sample 12 bits at their midpoints
-            for i in range(12):
-                sample_t = start_edge + (i * BIT_US) + HALF_BIT
-                bits.append(get_level(sample_t))
-            
-            # Jump to the end of the frame (roughly 11 bits in) 
-            # to hunt for the NEXT start bit
-            t = start_edge + (BIT_US * 11)
-        else:
-            t += 2 # Slide 2us and hunt
-    return bits
-
-def decode_bitstream(durations, baud=38400):
-    BIT_US = 1000000.0 / baud
-    # SAMPLE_OFFSET = BIT_US / 2.0
-    SAMPLE_OFFSET = BIT_US * 0.4 
-    
-    timeline = []
-    t_abs = 0
-    for level, dur in durations:
-        timeline.append((t_abs, level))
-        t_abs += dur
-
-    def get_level(t):
-        for edge_t, level in reversed(timeline):
-            if edge_t <= t: return level
-        return 1
-
-    bits = []
-    t = 0
-
-    # NEW: Force-check the very first sample. 
-    # If durations[0] is level 0, it's our first start bit!
-    if durations and durations[0][0] == 0:
-        start_edge = 0
-        for i in range(12):
-            sample_t = start_edge + (i * BIT_US) + SAMPLE_OFFSET
-            bits.append(get_level(sample_t))
-        t = start_edge + (BIT_US * 11)
-
-    # Continue hunting for the rest of the stream
-    while t < (t_abs - (BIT_US * 12)):
-        if get_level(t) == 1 and get_level(t + 2) == 0:
-            start_edge = t + 2
-            for i in range(12):
-                sample_t = start_edge + (i * BIT_US) + SAMPLE_OFFSET
-                bits.append(get_level(sample_t))
-            t = start_edge + (BIT_US * 11)
-        else:
-            t += 2 
-    return bits
-
-def decode_bitstream(durations, baud=38400):
-    BIT_US = 1000000.0 / baud
-    HALF_BIT = BIT_US / 2.0
-    
-    # 1. Convert to absolute timeline
-    timeline = []
-    t_abs = 0
-    for level, dur in durations:
-        timeline.append((t_abs, level))
-        t_abs += dur
-
-    bits = []
-    t = 0
-    ptr = 0
-    
-    def get_level_fast(target_t):
-        nonlocal ptr
-        # Move pointer forward to the correct edge
-        while ptr + 1 < len(timeline) and timeline[ptr+1][0] <= target_t:
-            ptr += 1
-        return timeline[ptr][1]
-
-    # 2. Logic to handle the very first byte if it starts at 0
-    if durations and durations[0][0] == 0:
-        start_edge = 0
-        for i in range(12):
-            bits.append(get_level_fast(start_edge + (i * BIT_US) + HALF_BIT))
-        t = start_edge + (BIT_US * 11)
-
-    # 3. Efficient Hunt and Sample
-    while t < (t_abs - (BIT_US * 12)):
-        # Efficient hunt: Find next 1 -> 0 transition
-        # We step by half-bits during the hunt for speed, then refine
-        if get_level_fast(t) == 1 and get_level_fast(t + 2) == 0:
-            # We found a falling edge, refine to the exact microsecond
-            start_edge = t
-            while start_edge < t + 5 and get_level_fast(start_edge) == 1:
-                start_edge += 1
-            
-            # Sample 12 bits (Start + 8 Data + 1 Control + 2 Stop)
-            for i in range(12):
-                bits.append(get_level_fast(start_edge + (i * BIT_US) + HALF_BIT))
-            
-            # Jump forward
-            t = start_edge + (BIT_US * 11.5)
-        else:
-            t += 2 # Move faster through idle
-            
-    return bits
 
 def decode_bitstream(durations, baud=38400):
     BIT_US = 1000000.0 / baud
@@ -490,6 +279,29 @@ def print_hex_data(data_bytes, n=16):
         
         print(f"{addr} {hex_vals} | {raw_ascii} | {masked_ascii}", flush=True)
 
+def init_pigpio():
+    global pi, callback, last_event_tick, last_idle_tick
+
+    pi = pigpio.pi()
+    if not pi.connected:
+        print("Error: Could not connect to pigpiod. Is it running?", flush=True)
+        print("Start it with: sudo systemctl enable --now pigpiod", flush=True)
+        raise SystemExit(1)
+
+    # Set up GPIO mode
+    pi.set_mode(DATA_PIN, pigpio.INPUT)
+    pi.set_pull_up_down(DATA_PIN, pigpio.PUD_OFF) 
+
+    # Set a glitch filter to ignore noise pulses shorter than 15 microseconds
+    # pi.set_glitch_filter(DATA_PIN, 2)
+    # print("Glitch filter set to 15 us.", flush=True)
+
+    # Create the callback that will fire on each signal change
+    callback = pi.callback(DATA_PIN, pigpio.EITHER_EDGE, data_callback)
+    last_event_tick = pi.get_current_tick()
+    last_idle_tick = pi.get_current_tick() - (GAP_MS * 2000)
+
+
 def main():
     global pi, callback, capturing, last_event_tick, last_idle_tick, transitions
 
@@ -497,24 +309,7 @@ def main():
     transitions = []              # Clear the global for the next burst
 
     try:
-        pi = pigpio.pi()
-        if not pi.connected:
-            print("Error: Could not connect to pigpiod. Is it running?", flush=True)
-            print("Start it with: sudo systemctl enable --now pigpiod", flush=True)
-            return
-
-        # Set up GPIO mode
-        pi.set_mode(DATA_PIN, pigpio.INPUT)
-        pi.set_pull_up_down(DATA_PIN, pigpio.PUD_OFF) 
-
-        # Set a glitch filter to ignore noise pulses shorter than 15 microseconds
-        # pi.set_glitch_filter(DATA_PIN, 2)
-        # print("Glitch filter set to 15 us.", flush=True)
-
-        # Create the callback that will fire on each signal change
-        callback = pi.callback(DATA_PIN, pigpio.EITHER_EDGE, data_callback)
-        last_event_tick = pi.get_current_tick()
-        last_idle_tick = pi.get_current_tick() - (GAP_MS * 2000) 
+        init_pigpio() 
 
         print("Waiting for signal changes... (Ctrl-C to stop)", flush=True)
         print("Trigger the Cybiko to send data now.", flush=True)
