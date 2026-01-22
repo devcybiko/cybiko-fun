@@ -1,0 +1,4 @@
+--- TX_AVR: [482799.944ms (11.432)ms] NEW FRAME (UART burst len=21) ---
+00000000  23 6d f7 08 be 88 77 91 c2 a2 f2 eb 0b f5 e3 99  |#m....w.........| |..1.11.11111.111| |#mw.>.w.B"rk.uc.|
+00000010  31 39 1f fd 4c                                   |19..L           | |...1.           | |19.}L           |
+Checksum mismatch: computed 0x20, received 0x4C, diff 0x2C

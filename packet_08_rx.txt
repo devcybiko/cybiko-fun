@@ -1,0 +1,10 @@
+Silence duration: 1162 us
+Silence duration: 12624 us
+
+Decoded bits: (12 @ 12)
+011001000000
+
+--- Stream 1: 1 bytes ---
+Address  Hex Values                                                       | ASCII            | Masked ASCII
+----------------------------------------------------------------------------------------------------------------
+0000:  013                                                              | .                | .

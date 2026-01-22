@@ -11,8 +11,8 @@ class HardUart:
         self.baud = baud
         self.gap_sec = gap_sec
         self.bytesize = serial.EIGHTBITS  # Add data bits config
-        self.parity = serial.PARITY_ODD
-        self.stopbits = serial.STOPBITS_TWO
+        self.parity = serial.PARITY_MARK
+        self.stopbits = serial.STOPBITS_ONE
         self.ser = serial.Serial(self.port, self.baud, timeout=self.SER_TIMEOUT,
                                  bytesize=self.bytesize, parity=self.parity,
                                  stopbits=self.stopbits)

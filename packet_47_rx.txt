@@ -1,0 +1,2 @@
+Silence duration: 6238 us
+Silence duration: 4017 us

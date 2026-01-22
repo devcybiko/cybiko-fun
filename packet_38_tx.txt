@@ -1,0 +1,3 @@
+--- TX_AVR: [482148.949ms (11.784)ms] NEW FRAME (UART burst len=3) ---
+00000000  01 02 04                                         |...             | |...             | |...             |
+Checksum mismatch: computed 0x03, received 0x04, diff 0x01
